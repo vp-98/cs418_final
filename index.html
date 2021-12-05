@@ -1,288 +1,337 @@
 <!DOCTYPE HTML> 
 <html> 
 
-<script src="unit teapot.js"></script>
+  <script src="unit teapot.js"></script>
+  <script src="gl-matrix-min.js"></script>
 
-<script src="gl-matrix-min.js"></script>
+    <script>
+    var gl;
+    var shaderProgram;
+    var modelview_uniform;
+    var normal_uniform;
+    var projection_uniform;
+    var texture, texture2;
+    var sampler_uniform;
+    var sampler2_uniform;
+    var teapot_vao;
+    var vert_pos_attr;
+    var vert_normal_attr;
 
-<script>
-var gl;
-var shaderProgram;
-var modelview_uniform;
-var normal_uniform;
-var projection_uniform;
-var texture, texture2;
-var sampler_uniform;
-var sampler2_uniform;
-var teapot_vao;
-var vert_pos_attr;
-var vert_normal_attr;
-
-//
-// a default vertex shader implemented as a backquoted string variable
-//
-
-var vs = `#version 300 es
-
-in vec3 aVertexPosition;
-in vec3 aVertexNormal;
-in vec2 aTexCoord;
-
-uniform mat4 uModelViewMatrix;
-uniform mat3 uNormalMatrix;
-uniform mat4 uProjectionMatrix;
-
-out vec2 vTexCoord;
-out vec3 vNormal;
-
-void main() {
-  vTexCoord.s = aVertexPosition.x + 0.5;
-  vTexCoord.t = aVertexPosition.y + 0.5;
-
-  gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
-}
-`;
-
-//
-// a default fragment shader implemented as a backquoted string variable
-//
-
-var fs = `#version 300 es
-
-precision mediump float;
+    //----------------------------------------------------VERTEX SHADER----------------------------------------------------
+    //
+    // a default vertex shader implemented as a backquoted string variable
+    //
+    var vs = `#version 300 es
+    in vec3 aVertexPosition;
+    in vec3 aVertexNormal;
+    //in vec2 aTexCoord;
     
-in vec3 vNormal;
-in vec2 vTexCoord;
-uniform sampler2D uSampler;
-uniform sampler2D uSampler2;
-
-out vec4 outColor;
+    uniform mat4 uModelViewMatrix;
+    uniform mat3 uNormalMatrix;
+    uniform mat4 uProjectionMatrix;
     
-void main() {
-  vec3 illinois = vec3(texture(uSampler, vTexCoord));
-  vec3 stadium = vec3(texture(uSampler2, vTexCoord));
-  vec3 c = 0.5*illinois + 0.5*stadium;
+    // output varibals
+    out vec3 vVertexPosition;
+    out vec3 vNormal;
+    out vec3 n, l, v;
 
-  outColor = vec4(c,1.0);
-}
-`;
+    void main() {
+      vec3 lightPosition = vec3(7.5, 7.5, 7.5); // Random light position, can be changed
+      vVertexPosition = aVertexPosition;
+      
+      // Calculate normals for vertex
+      vNormal = uNormalMatrix * aVertexNormal;
+      n = normalize(vNormal);
 
+      // Similar approach to the Phong Shading assignment
+      l = normalize(lightPosition);     // Normalize lp
+      vec4 p = uModelViewMatrix*vec4(aVertexPosition, 1.0);
+      v = normalize(-p.xyz);            // Obtain view vector
 
+      gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
+    }
+    `;
 
-function initwebgl() {
-
-  //
-  // create a graphics context
-  //
-
-  var canvas = document.getElementById("myGLCanvas");
-  gl = canvas.getContext("webgl2");
-  if (!gl)
-    alert("Failed to create WebGL context!");
-
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-
-  loadshaders(vs,fs);
-
-  // set up vertex array object
- 
-  teapot_vao = gl.createVertexArray();
-  gl.bindVertexArray(teapot_vao);
-
-  // create a coordinate buffer of vertex positions and
-  // connect it to the vertex shader positions
- 
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER,
-                new Float32Array(teapot.positions),
-                gl.STATIC_DRAW);
-
-  gl.enableVertexAttribArray(vert_pos_attr);
-  gl.vertexAttribPointer(vert_pos_attr, 3, gl.FLOAT, false, 0, 0);
-
-  // create a coordinate buffer of vertex positions and
-  // connect it to the vertex shader positions
-  // but normalize the normals first
-
-  var x,y,z,d,i;
-  for (i = 0; i < teapot.normals.length; i += 3) {
-    x = teapot.normals[i];
-    y = teapot.normals[i+1];
-    z = teapot.normals[i+2];
-
-    d = 1.0/Math.sqrt(x*x + y*y + z*z);
-
-    teapot.normals[i] *= d;
-    teapot.normals[i+1] *= d;
-    teapot.normals[i+2] *= d;
+    //---------------------------------------------------FRAGMENT SHADER---------------------------------------------------
+    //
+    // a default fragment shader implemented as a backquoted string variable
+    //
+    var fs = `#version 300 es
+    precision mediump float;
     
-  }
+    // Input variables
+    in vec3 vNormal;
+    in vec3 n,l,v;
+    in vec3 vVertexPosition;
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER,
-                new Float32Array(teapot.normals),
-                gl.STATIC_DRAW);
+    uniform sampler2D uSampler;
+    uniform sampler2D uSampler2;
+    
+    // Output variables
+    out vec4 outColor;
 
-  gl.enableVertexAttribArray(vert_normal_attr);
-  gl.vertexAttribPointer(vert_normal_attr, 3, gl.FLOAT, false, 0, 0);
+    void main() {
+      // [Smooth Per-Pixel Shading Requirement using Fragment Shader]
+      
+      //-----------------------------------Variables Used-----------------------------------
+      // Diffuse and specular colors and coefficients, gleam exponent for Phong Shading
+      vec3 diffuseColor = vec3(1.0,1.0,1.0);      // (100%, 100%, 100%) white
+      vec3 specularColor = vec3(1.0,1.0,1.0);     // (100%, 100%, 100%) white
+      vec3 ambientColor = vec3(0.94, 0.92, 0.61); // ( 94%,  92%,  61%) yellow-ish
+      float ambStrength = 0.10;                   // Strength of ambient light
+      float gleamExpo = 10.0;                     // specular gleam exponent
+      float kd = 0.5;                 // Diffuse reflection coefficients
+      float ks = 0.5;                 // Specular reflection coefficients
+      vec3 N = normalize(n);          // Normalize normals again
+      vec3 r = reflect(-l,N);         // Get the reflection vec of the light
+      float pi = 3.1415926535;        // For cylindrical mapping
+      
+      //-----------------------------------Texture Mapping----------------------------------
+      // [Surface Texture Requirement] Surface Texture using Illinois Logo mapping
+      vec2 vIllinoisCoord; 
+      vIllinoisCoord.s = 1.0 - atan(vVertexPosition.z, vVertexPosition.x) / (2.0 * pi);
+      vIllinoisCoord.t = 2.0 * (vVertexPosition.y) + 0.5;
+      vec3 illinois = vec3(texture(uSampler, vIllinoisCoord));
 
-  // create an index buffer of triangle faces
+      //-----------------------------Reflective Surface Mapping-----------------------------
+      // [Reflective Surface Requirement] Reflective Surface reflecting Statium sphere map
+      vec2 vStatiumCoord;
+      vStatiumCoord.s = (vNormal.x + 1.0) / 2.0;
+      vStatiumCoord.t = (vNormal.y + 1.0) / 2.0;
+      vec3 stadium = vec3(texture(uSampler2, vStatiumCoord));
+      
+      //-------------------------------------Lighting---------------------------------------
+      // [Ambient Light Requirement] Ambient component calculation
+      vec3 ambientComp = ambStrength * ambientColor;
 
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); 
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,
-                new Uint16Array(teapot.faces),
-                gl.STATIC_DRAW);
+      // [Diffuse Reflectance Requirement] Diffuse component calculation
+      vec3 diffuseComp = kd * diffuseColor * max(dot(N, l), 0.0);
 
-  //
-  // set up texture and sampler
-  //
+      // [Specular Highlights Requirement] Specular component calculation
+      vec3 specularComp = ks * specularColor * pow(max(dot(v, r), 0.0), gleamExpo);
 
-  texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
+      // Combined Phong Lighting calculation
+      vec3 allLights = ambientComp + diffuseComp + specularComp;
+      
+      //--------------------------------------Final-----------------------------------------
+      vec3 colors = illinois + stadium;
+      outColor = vec4((allLights * colors), 1.0);
+    }
+    `;
 
-  var sampler = gl.createSampler();
-  gl.bindSampler(0, sampler);
+    function initwebgl() {
 
-  //
-  // load texture image using webgl2fundamentals boilerplate
-  // initially creates just a 1x1 blue pixel as a placeholder
-  // replaced by actual texture image once loaded
-  //
+      //
+      // create a graphics context
+      //
 
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+      var canvas = document.getElementById("myGLCanvas");
+      gl = canvas.getContext("webgl2");
+      if (!gl)
+        alert("Failed to create WebGL context!");
 
-  var image = new Image();
-  image.src = "illinois512.png";
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-  image.addEventListener("load", function() {
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    gl.generateMipmap(gl.TEXTURE_2D);
-  });
+      loadshaders(vs,fs);
 
-  //
-  // set up second texture and sampler
-  //
+      // set up vertex array object
+    
+      teapot_vao = gl.createVertexArray();
+      gl.bindVertexArray(teapot_vao);
 
-  texture2 = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture2);
+      // create a coordinate buffer of vertex positions and
+      // connect it to the vertex shader positions
+    
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER,
+                    new Float32Array(teapot.positions),
+                    gl.STATIC_DRAW);
 
-  var sampler2 = gl.createSampler();
-  gl.bindSampler(1, sampler2);
+      gl.enableVertexAttribArray(vert_pos_attr);
+      gl.vertexAttribPointer(vert_pos_attr, 3, gl.FLOAT, false, 0, 0);
 
-  //
-  // load texture image using webgl2fundamentals boilerplate
-  // initially creates just a 1x1 blue pixel as a placeholder
-  // replaced by actual texture image once loaded
-  //
+      // create a coordinate buffer of vertex positions and
+      // connect it to the vertex shader positions
+      // but normalize the normals first
 
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+      var x,y,z,d,i;
+      for (i = 0; i < teapot.normals.length; i += 3) {
+        x = teapot.normals[i];
+        y = teapot.normals[i+1];
+        z = teapot.normals[i+2];
 
-  var image2 = new Image();
-  image2.src = "stadium sphere.jpg";
+        d = 1.0/Math.sqrt(x*x + y*y + z*z);
 
-  image2.addEventListener("load", function() {
-    gl.bindTexture(gl.TEXTURE_2D, texture2);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
-    gl.generateMipmap(gl.TEXTURE_2D);
-  });
+        teapot.normals[i] *= d;
+        teapot.normals[i+1] *= d;
+        teapot.normals[i+2] *= d;
+        
+      }
 
-  //
-  // set up transformation matrices
-  //
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER,
+                    new Float32Array(teapot.normals),
+                    gl.STATIC_DRAW);
 
-  projection = glMatrix.mat4.create();
-  glMatrix.mat4.perspective(projection, Math.PI/6, 1.0, 0.1);
+      gl.enableVertexAttribArray(vert_normal_attr);
+      gl.vertexAttribPointer(vert_normal_attr, 3, gl.FLOAT, false, 0, 0);
 
-  requestAnimationFrame(draw);
-}
+      // create an index buffer of triangle faces
 
-function loadshaders(vertexShaderSource,fragmentShaderSource) {
-  var vstextbox = document.getElementById("vertexshader");
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); 
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,
+                    new Uint16Array(teapot.faces),
+                    gl.STATIC_DRAW);
 
-  var vertexShader = gl.createShader(gl.VERTEX_SHADER);
-  gl.shaderSource(vertexShader, vertexShaderSource);
-  gl.compileShader(vertexShader);
-  if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
-    alert("Vertex Shader Error:\n" + gl.getShaderInfoLog(vertexShader));
+      //
+      // set up texture and sampler
+      //
 
-  var fstextbox = document.getElementById("fragmentshader");
+      texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
 
-  var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-  gl.shaderSource(fragmentShader, fragmentShaderSource);
-  gl.compileShader(fragmentShader);
-  if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
-    alert("Fragment Shader Error:\n" + gl.getShaderInfoLog(fragmentShader));
+      var sampler = gl.createSampler();
+      gl.bindSampler(0, sampler);
 
-  //
-  // Compile shaders and get link ID's to the attributes and uniforms
-  //
+      //
+      // load texture image using webgl2fundamentals boilerplate
+      // initially creates just a 1x1 blue pixel as a placeholder
+      // replaced by actual texture image once loaded
+      //
 
-  shaderProgram = gl.createProgram();
-  gl.attachShader(shaderProgram, vertexShader);
-  gl.attachShader(shaderProgram, fragmentShader);
-  gl.linkProgram(shaderProgram);
-  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
-    alert("Failed to setup shaders");
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
 
-  vert_pos_attr = gl.getAttribLocation(shaderProgram, "aVertexPosition");
-  vert_normal_attr = gl.getAttribLocation(shaderProgram, "aVertexNormal");
-  modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix"); 
-  normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix"); 
-  projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
-  sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
-  sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
-}
+      var image = new Image();
+      //image.src = "illinois512.png";
+      image.src = "illinois512_borderless.png";
 
-//
-// draw callback function that is passed to requestAnimationFrame()
-//
+      image.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
 
-function draw(time) {
-  gl.clearColor(0.075, 0.16, 0.294, 1.0);
-  gl.clearDepth(1.0);
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      //
+      // set up second texture and sampler
+      //
 
-  modelview = glMatrix.mat4.create();
-  glMatrix.mat4.translate(modelview,modelview,[0.0, 0.0, -2.0]);
-  glMatrix.mat4.rotateY(modelview,modelview, time*0.001);
+      texture2 = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture2);
 
-  normalmatrix = glMatrix.mat3.create();
-  glMatrix.mat3.normalFromMat4(normalmatrix,modelview);
+      var sampler2 = gl.createSampler();
+      gl.bindSampler(1, sampler2);
 
-  gl.useProgram(shaderProgram);
+      //
+      // load texture image using webgl2fundamentals boilerplate
+      // initially creates just a 1x1 blue pixel as a placeholder
+      // replaced by actual texture image once loaded
+      //
 
-  gl.uniformMatrix4fv(modelview_uniform, false, modelview);
-  gl.uniformMatrix3fv(normal_uniform, false, normalmatrix);
-  gl.uniformMatrix4fv(projection_uniform, false, projection);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
 
-  gl.uniform1i(sampler_uniform,0);
-  gl.uniform1i(sampler2_uniform,1);
+      var image2 = new Image();
+      image2.src = "stadium sphere.jpg";
 
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, texture2);
+      image2.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture2);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
 
-  gl.bindVertexArray(teapot_vao);
-  gl.drawElements(gl.TRIANGLES,
-                  teapot.faces.length,
-                  gl.UNSIGNED_SHORT,
-                  0);
+      //
+      // set up transformation matrices
+      //
 
-  requestAnimationFrame(draw);
-}
+      projection = glMatrix.mat4.create();
+      glMatrix.mat4.perspective(projection, Math.PI/6, 1.0, 0.1);
 
+      requestAnimationFrame(draw);
+    }
+
+    function loadshaders(vertexShaderSource,fragmentShaderSource) {
+      var vstextbox = document.getElementById("vertexshader");
+
+      var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vertexShader, vertexShaderSource);
+      gl.compileShader(vertexShader);
+      if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
+        alert("Vertex Shader Error:\n" + gl.getShaderInfoLog(vertexShader));
+
+      var fstextbox = document.getElementById("fragmentshader");
+
+      var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fragmentShader, fragmentShaderSource);
+      gl.compileShader(fragmentShader);
+      if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
+        alert("Fragment Shader Error:\n" + gl.getShaderInfoLog(fragmentShader));
+
+      //
+      // Compile shaders and get link ID's to the attributes and uniforms
+      //
+
+      shaderProgram = gl.createProgram();
+      gl.attachShader(shaderProgram, vertexShader);
+      gl.attachShader(shaderProgram, fragmentShader);
+      gl.linkProgram(shaderProgram);
+      if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
+        alert("Failed to setup shaders");
+
+      vert_pos_attr = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+      vert_normal_attr = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+      modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix"); 
+      normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix"); 
+      projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
+      sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
+      sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
+    }
+
+    //
+    // draw callback function that is passed to requestAnimationFrame()
+    //
+    function draw(time) {
+      gl.clearColor(0.075, 0.16, 0.294, 1.0);
+      gl.clearDepth(1.0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      modelview = glMatrix.mat4.create();
+      glMatrix.mat4.translate(modelview,modelview,[0.0, 0.0, -2.0]);
+      glMatrix.mat4.rotateY(modelview,modelview, time*0.001);
+
+      normalmatrix = glMatrix.mat3.create();
+      glMatrix.mat3.normalFromMat4(normalmatrix,modelview);
+
+      gl.useProgram(shaderProgram);
+
+      gl.uniformMatrix4fv(modelview_uniform, false, modelview);
+      gl.uniformMatrix3fv(normal_uniform, false, normalmatrix);
+      gl.uniformMatrix4fv(projection_uniform, false, projection);
+
+      gl.uniform1i(sampler_uniform,0);
+      gl.uniform1i(sampler2_uniform,1);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texture2);
+
+      gl.bindVertexArray(teapot_vao);
+      gl.drawElements(gl.TRIANGLES, teapot.faces.length,
+                      gl.UNSIGNED_SHORT,
+                      0);
+
+      requestAnimationFrame(draw);
+    }
 
 </script>
 
-<body onload="initwebgl()">
+  <body onload="initwebgl()">
 
-<canvas id="myGLCanvas" width="500" height="500"></canvas>
+  <canvas id="myGLCanvas" width="500" height="500"></canvas>
 
-</body>
+  </body>
 </html>
+
