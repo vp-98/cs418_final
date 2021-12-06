@@ -1,3 +1,9 @@
+<!--
+  Photorealistic Rendering MP
+  FA21 CS 418
+  Vraj Patel
+  vpate33
+-->
 <!DOCTYPE HTML> 
 <html> 
 
@@ -99,8 +105,8 @@
       float st = length(vec3(texture(uSampler3, vIllinoisCoords)));
 
       // Calculate changes in B(s) and B(t) moving a unit over from current point
-      vec2 vIllinoisCoord_s_neighbor =  vIllinoisCoords + vec2(1.0 / mapWidth, 0);  // 1 pixel to the right
-      vec2 vIllinoisCoord_t_neighbor =  vIllinoisCoords + vec2(0, 1.0 / mapHeight); // 1 pixel above
+      vec2 vIllinoisCoord_s_neighbor = vIllinoisCoords + vec2(1.0 / mapWidth, 0);  // 1 pixel to the right
+      vec2 vIllinoisCoord_t_neighbor = vIllinoisCoords + vec2(0, 1.0 / mapHeight); // 1 pixel above
       float sNeighbor = length(vec3(texture(uSampler3, vIllinoisCoord_s_neighbor)) * strength);
       float tNeighbor = length(vec3(texture(uSampler3, vIllinoisCoord_t_neighbor)) * strength);
       
@@ -177,12 +183,13 @@
       vStatiumCoord.t = (vNormal.y + 1.0) / 2.0;
       vec3 stadium = vec3(texture(uSampler2, vStatiumCoord));
       
+      vec3 colors = illinois + stadium;
+      
       //------------------------------------Lighting--------------------------------------
       // [Phong lighting model is used to compute lighting]
       vec3 allLights = phongLighting(N) + (0.35 * procedComp);
       
       //--------------------Final--------------------
-      vec3 colors = illinois + stadium;
       outColor = vec4((allLights * colors), 1.0);
     }
     `;
