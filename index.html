@@ -16,6 +16,7 @@
     var teapot_vao;
     var vert_pos_attr;
     var vert_normal_attr;
+    var sampler3_uniform; // For bump mapping
 
     //----------------------------------------------------VERTEX SHADER----------------------------------------------------
     //
@@ -54,7 +55,17 @@
 
     //---------------------------------------------------FRAGMENT SHADER---------------------------------------------------
     //
-    // a default fragment shader implemented as a backquoted string variable
+    // a default fragment shader implemented as a backquoted string variable. 
+    //  Required components implemented:
+    //   - Smooth per-pixel shading
+    //   - Diffuse reflectance
+    //   - Specular highlights
+    //   - Surface texture
+    //   - Reflective surface
+    //
+    //  Extra credit components implemented:
+    //   - Procedural texture
+    //   - Bump mapping
     //
     var fs = `#version 300 es
     precision mediump float;
@@ -64,43 +75,59 @@
     in vec3 n,l,v;
     in vec3 vVertexPosition;
 
-    uniform sampler2D uSampler;
-    uniform sampler2D uSampler2;
+    uniform sampler2D uSampler;   // For texture mapping
+    uniform sampler2D uSampler2;  // For reflective mapping
+    uniform sampler2D uSampler3;  // For bump mapping
     
     // Output variables
     out vec4 outColor;
 
-    void main() {
-      // [Smooth Per-Pixel Shading Requirement using Fragment Shader]
+    /*--------------------------------------------------------------------------------------
+    * bumpedNormals
+    *  This function calculates the new normals (n prime) using a bump map. Formula used:
+    *   n prime = n - (dB/ds)n x pt + (dB/dt)n x ps.
+    *  Map widths and heights are needed to correctly check the neighboring values in the
+    *   bump map texture. Strength is used to limit how powerful the bump is portrayed as.
+    *   Function returns the new normals.
+    */
+    vec3 bumpedNormals(vec2 vIllinoisCoords, vec3 N, float mapWidth, float mapHeight, float strength) {
+      vec3 upVector = vec3(0.0,1.0,0.0);
+      vec3 ps = normalize(cross(N, upVector));
+      vec3 pt = normalize(cross(N, ps));
+
+      // B(s) and B(t) for the current point
+      float st = length(vec3(texture(uSampler3, vIllinoisCoords)));
+
+      // Calculate changes in B(s) and B(t) moving a unit over from current point
+      vec2 vIllinoisCoord_s_neighbor =  vIllinoisCoords + vec2(1.0 / mapWidth, 0);  // 1 pixel to the right
+      vec2 vIllinoisCoord_t_neighbor =  vIllinoisCoords + vec2(0, 1.0 / mapHeight); // 1 pixel above
+      float sNeighbor = length(vec3(texture(uSampler3, vIllinoisCoord_s_neighbor)) * strength);
+      float tNeighbor = length(vec3(texture(uSampler3, vIllinoisCoord_t_neighbor)) * strength);
       
+      // Perform the calculation nprime = n - dB/ds * cross(n, pt) + dB/dt * cross(N, ps)
+      float dBds = (sNeighbor - st); // dB/ds = (B(s+h) - B(n))/h, h = 1
+      float dBdt = (tNeighbor - st); // dB/dt = (B(t+h) - B(n))/h, h = 1
+      return normalize(N - (dBds * cross(N, pt)) + (dBdt * cross(N, pt)));
+    }
+
+    /*--------------------------------------------------------------------------------------
+    * phongLighting
+    *  This function calculates the total lighting. This meets the requirements of diffuse
+    *   reflectance and specular highlight requirements. Ambient light is also added to the
+    *   model. Returns the total lighting computed.
+    */
+    vec3 phongLighting(vec3 N) {
       //-----------------------------------Variables Used-----------------------------------
       // Diffuse and specular colors and coefficients, gleam exponent for Phong Shading
-      vec3 diffuseColor = vec3(1.0,1.0,1.0);      // (100%, 100%, 100%) white
-      vec3 specularColor = vec3(1.0,1.0,1.0);     // (100%, 100%, 100%) white
-      vec3 ambientColor = vec3(0.94, 0.92, 0.61); // ( 94%,  92%,  61%) yellow-ish
+      vec3 diffuseColor = vec3(1.0,1.0,1.0);      // (255, 255, 255) white
+      vec3 specularColor = vec3(1.0,1.0,1.0);     // (255, 255, 255) white
+      vec3 ambientColor = vec3(0.51, 0.72, 0.99); // (131, 184, 252) light-blue
       float ambStrength = 0.10;                   // Strength of ambient light
       float gleamExpo = 10.0;                     // specular gleam exponent
       float kd = 0.5;                 // Diffuse reflection coefficients
       float ks = 0.5;                 // Specular reflection coefficients
-      vec3 N = normalize(n);          // Normalize normals again
       vec3 r = reflect(-l,N);         // Get the reflection vec of the light
-      float pi = 3.1415926535;        // For cylindrical mapping
-      
-      //-----------------------------------Texture Mapping----------------------------------
-      // [Surface Texture Requirement] Surface Texture using Illinois Logo mapping
-      vec2 vIllinoisCoord; 
-      vIllinoisCoord.s = 1.0 - atan(vVertexPosition.z, vVertexPosition.x) / (2.0 * pi);
-      vIllinoisCoord.t = 2.0 * (vVertexPosition.y) + 0.5;
-      vec3 illinois = vec3(texture(uSampler, vIllinoisCoord));
 
-      //-----------------------------Reflective Surface Mapping-----------------------------
-      // [Reflective Surface Requirement] Reflective Surface reflecting Statium sphere map
-      vec2 vStatiumCoord;
-      vStatiumCoord.s = (vNormal.x + 1.0) / 2.0;
-      vStatiumCoord.t = (vNormal.y + 1.0) / 2.0;
-      vec3 stadium = vec3(texture(uSampler2, vStatiumCoord));
-      
-      //-------------------------------------Lighting---------------------------------------
       // [Ambient Light Requirement] Ambient component calculation
       vec3 ambientComp = ambStrength * ambientColor;
 
@@ -108,12 +135,53 @@
       vec3 diffuseComp = kd * diffuseColor * max(dot(N, l), 0.0);
 
       // [Specular Highlights Requirement] Specular component calculation
-      vec3 specularComp = ks * specularColor * pow(max(dot(v, r), 0.0), gleamExpo);
+      vec3 specularComp = (ks * specularColor * pow(max(dot(v, r), 0.0), gleamExpo));
 
       // Combined Phong Lighting calculation
       vec3 allLights = ambientComp + diffuseComp + specularComp;
+
+      return allLights;
+    }
+    //-----------------------------------------MAIN-----------------------------------------
+    void main() {
+      // [Smooth Per-Pixel Shading Requirement using Fragment Shader]
       
-      //--------------------------------------Final-----------------------------------------
+      //------------------Variables Used------------------
+      vec3 N = normalize(n);    // Normalize normals again
+      float pi = 3.1415926535;  // For cylindrical mapping
+      
+      //----------------------------------Texture Mapping---------------------------------
+      // [Surface Texture Requirement] Surface Texture using Illinois Logo mapping
+      vec2 vIllinoisCoord; 
+      vIllinoisCoord.s = 1.0 - atan(vVertexPosition.z, vVertexPosition.x) / (2.0 * pi);
+      vIllinoisCoord.t = (2.0 * vVertexPosition.y) + 0.5;
+      vec3 illinois = vec3(texture(uSampler, vIllinoisCoord));
+
+      //--------------------------------Procedural Texture--------------------------------
+      // [Procedural Texture Extra Credit] Surface Texture using computational approach
+      vec3 illiniOrange = vec3(1.0, 0.33, 0.18);        // (255, 84, 45) Orange
+      vec3 illiniBlue = vec3(0.075, 0.16, 0.294);       // ( 19, 40, 75) Blue
+      vec3 procedComp = illiniBlue;
+      bool sCoordCheck = mod(floor(0.5 + (vIllinoisCoord.s * 10.0)), 2.0) == 0.0;
+      bool tCoordCheck = (floor((vIllinoisCoord.t * 10.0))) <= 7.0;  // Body only
+      if (sCoordCheck && tCoordCheck) { procedComp = illiniOrange; }
+
+      //-----------------------------------Bump Mapping-----------------------------------
+      // [Bump Mapping Extra Credit] Bump map is applied to the teapot
+      N = bumpedNormals(vIllinoisCoord, N, 512.0, 512.0, 14.0);
+
+      //----------------------------Reflective Surface Mapping----------------------------
+      // [Reflective Surface Requirement] Reflective Surface reflecting Statium sphere map
+      vec2 vStatiumCoord;
+      vStatiumCoord.s = (vNormal.x + 1.0) / 2.0;
+      vStatiumCoord.t = (vNormal.y + 1.0) / 2.0;
+      vec3 stadium = vec3(texture(uSampler2, vStatiumCoord));
+      
+      //------------------------------------Lighting--------------------------------------
+      // [Phong lighting model is used to compute lighting]
+      vec3 allLights = phongLighting(N) + (0.35 * procedComp);
+      
+      //--------------------Final--------------------
       vec3 colors = illinois + stadium;
       outColor = vec4((allLights * colors), 1.0);
     }
@@ -240,6 +308,23 @@
         gl.generateMipmap(gl.TEXTURE_2D);
       });
 
+      //-----------------------------------------------------------------------------------------
+      // Texutre and uSampler for Bump mapping
+      texture3 = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture3);
+      var sampler3 = gl.createSampler();
+      gl.bindSampler(2, sampler3);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+      var image3 = new Image();
+      image3.src = "illinois512_bump2.png";
+      image3.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture3);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image3);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
+      //-----------------------------------------------------------------------------------------
+
       //
       // set up transformation matrices
       //
@@ -280,11 +365,12 @@
 
       vert_pos_attr = gl.getAttribLocation(shaderProgram, "aVertexPosition");
       vert_normal_attr = gl.getAttribLocation(shaderProgram, "aVertexNormal");
-      modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix"); 
-      normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix"); 
-      projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
-      sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
-      sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
+      modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix");
+      normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix");
+      projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix");
+      sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler");
+      sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2");
+      sampler3_uniform = gl.getUniformLocation(shaderProgram, "uSampler3"); 
     }
 
     //
@@ -312,11 +398,14 @@
 
       gl.uniform1i(sampler_uniform,0);
       gl.uniform1i(sampler2_uniform,1);
+      gl.uniform1i(sampler3_uniform, 2);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, texture2);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, texture3)
 
       gl.bindVertexArray(teapot_vao);
       gl.drawElements(gl.TRIANGLES, teapot.faces.length,
@@ -334,4 +423,3 @@
 
   </body>
 </html>
-
